@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: auth
+
+  # Lets a local ".env" (copied from .env.example) configure the app without extra tooling.
+  # Real environment variables still take precedence over the file, so deployments are unaffected.
+  config:
+    import: optional:file:.env[.properties]
+
+  datasource:
+    # Defaults match docker-compose.yml so a fresh clone runs with no extra setup.
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/auth}
+    username: ${DATABASE_USERNAME:auth}
+    password: ${DATABASE_PASSWORD:auth}
+
+  jpa:
+    hibernate:
+      # Schema belongs to Flyway only; Hibernate just checks the mapping against it.
+      ddl-auto: validate
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+jwt:
+  # Deliberately without a default: a signing key must never be committed.
+  # Bound and validated in backlog 0004.
+  secret: ${JWT_SECRET:}
+  access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:15m}
+  refresh-token-expiration: ${JWT_REFRESH_TOKEN_EXPIRATION:7d}
