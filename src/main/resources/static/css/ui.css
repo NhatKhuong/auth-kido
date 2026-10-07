@@ -1,0 +1,60 @@
+/*
+ * Shared styling for the static UI (backlog 0009). Hand-written and intentionally tiny: a
+ * polished or responsive interface is an explicit non-goal and ADR 0001 decision 5 rules out a
+ * CSS framework. One file instead of three inline <style> blocks so the pages stay readable.
+ */
+body {
+	font-family: system-ui, sans-serif;
+	margin: 2rem auto;
+	max-width: 44rem;
+	padding: 0 1rem;
+}
+
+label {
+	display: block;
+	margin: 0.5rem 0 0.75rem;
+}
+
+input {
+	display: block;
+	margin-top: 0.25rem;
+	padding: 0.3rem;
+	width: 18rem;
+}
+
+table {
+	border-collapse: collapse;
+	margin-top: 0.5rem;
+}
+
+th,
+td {
+	border: 1px solid #999;
+	padding: 0.25rem 0.75rem;
+	text-align: left;
+}
+
+/* Status lines are empty until something happens, so they must not reserve space when blank. */
+.message:empty {
+	display: none;
+}
+
+.message {
+	margin: 0.75rem 0;
+	padding: 0.5rem;
+}
+
+.message.error {
+	background: #fdd;
+	border: 1px solid #c00;
+}
+
+.message.ok {
+	background: #dfd;
+	border: 1px solid #0a0;
+}
+
+/* Toggled from JS: the admin link is hidden unless the account holds USER_READ. */
+[hidden] {
+	display: none;
+}

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Đăng nhập</title>
+	<link rel="stylesheet" href="css/ui.css">
+</head>
+<body>
+<h1>Đăng nhập</h1>
+
+<form id="login-form">
+	<label>
+		Tên đăng nhập
+		<!-- autocomplete hints are what tell the browser not to offer to save this as a note. -->
+		<input id="username" name="username" type="text" autocomplete="username" required>
+	</label>
+	<label>
+		Mật khẩu
+		<input id="password" name="password" type="password" autocomplete="current-password" required>
+	</label>
+	<button id="submit" type="submit">Đăng nhập</button>
+</form>
+
+<p id="message" class="message error" role="alert"></p>
+
+<script src="js/api.js"></script>
+<script>
+	'use strict';
+
+	const form = document.getElementById('login-form');
+	const message = document.getElementById('message');
+	const submit = document.getElementById('submit');
+
+	form.addEventListener('submit', async function (event) {
+		// Without this the browser would GET /login.html?username=... and put the password in the
+		// address bar and the server access log.
+		event.preventDefault();
+		message.textContent = '';
+		submit.disabled = true;
+
+		const credentials = {
+			username: document.getElementById('username').value,
+			password: document.getElementById('password').value
+		};
+
+		try {
+			const tokens = await Api.request('/api/auth/login', {
+				method: 'POST',
+				body: JSON.stringify(credentials),
+				// Here a 401 is "wrong credentials" and must be shown. The default behaviour of
+				// bouncing to the login page would reload this very page and lose the message.
+				redirectOnUnauthorized: false
+			});
+			Api.storeAccessToken(tokens.accessToken);
+			// replace() so the back button cannot return to a login form behind a live session.
+			window.location.replace('account.html');
+		}
+		catch (error) {
+			// The API's own {code, message} is shown rather than wording invented here: the
+			// server deliberately gives one message for every bad-credential case.
+			message.textContent = error.message;
+		}
+		finally {
+			submit.disabled = false;
+		}
+	});
+</script>
+</body>
+</html>

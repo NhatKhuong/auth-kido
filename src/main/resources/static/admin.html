@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Danh sách người dùng</title>
+	<link rel="stylesheet" href="css/ui.css">
+</head>
+<body>
+<h1>Danh sách người dùng</h1>
+
+<p>
+	<a href="account.html">Thông tin tài khoản</a>
+	<button id="logout" type="button">Đăng xuất</button>
+</p>
+
+<p id="message" class="message error" role="alert"></p>
+
+<!-- Hidden until the list actually arrives, so a refused caller never sees an empty table. -->
+<table id="users" hidden>
+	<thead>
+	<tr>
+		<th>ID</th>
+		<th>Tên đăng nhập</th>
+		<th>Vai trò</th>
+	</tr>
+	</thead>
+	<tbody id="users-body"></tbody>
+</table>
+
+<script src="js/api.js"></script>
+<script>
+	'use strict';
+
+	const message = document.getElementById('message');
+	const table = document.getElementById('users');
+	const body = document.getElementById('users-body');
+
+	document.getElementById('logout').addEventListener('click', function () {
+		Api.clearAccessToken();
+		Api.goToLogin();
+	});
+
+	async function loadUsers() {
+		try {
+			const users = await Api.request('/api/admin/users');
+			users.forEach(function (user) {
+				const row = body.insertRow();
+				// textContent and not innerHTML: a username is user-controlled data and must
+				// never be parsed as markup.
+				row.insertCell().textContent = user.id;
+				row.insertCell().textContent = user.username;
+				row.insertCell().textContent = user.roles.join(', ');
+			});
+			table.hidden = false;
+		}
+		catch (error) {
+			// 403 is the expected outcome for an account without USER_READ. It is reported, not
+			// hidden: a blank page would look like a broken app instead of a refused request.
+			if (error.status === 403) {
+				message.textContent = 'Bạn không có quyền xem danh sách người dùng (403 '
+						+ error.code + ': ' + error.message + ').';
+				return;
+			}
+			message.textContent = error.message;
+		}
+	}
+
+	if (Api.requireAccessToken()) {
+		loadUsers();
+	}
+</script>
+</body>
+</html>

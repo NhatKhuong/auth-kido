@@ -4,6 +4,7 @@ import com.example.auth.config.JwtProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -18,7 +19,8 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter;
  * The stateless JWT security chain (architecture 01-overview.md sections 2.6, 3 and 4).
  *
  * <p>Replaces the permit-everything placeholder from backlog 0002. Backlog 0007 adds the access
- * denied handler that renders 403 in the same error shape.
+ * denied handler that renders 403 in the same error shape. Backlog 0009 adds the anonymous read
+ * rule for the static UI files (architecture 01-overview.md section 11).
  */
 @Configuration
 // Method security is enabled here rather than in 0007 so the foundation the rest of the epic
@@ -54,6 +56,22 @@ public class SecurityConfig {
 						// Login and refresh must work without an access token: refresh exists
 						// precisely because the caller's access token has expired.
 						.requestMatchers("/api/auth/**").permitAll()
+						// The static UI of backlog 0009. A browser has to fetch login.html before
+						// it can possibly hold a token, so these files must be readable
+						// anonymously.
+						//
+						// The patterns are narrow on purpose. "/*.html" is a single path segment
+						// at the root, so it covers /login.html and reaches nothing under /api,
+						// and the two prefixes name directories that hold only markup, script and
+						// styling. GET only: these are documents to read, and permitting a write
+						// method on them would open an unauthenticated path for no reason.
+						// StaticUiIntegrationTest pins both halves — the files load without a
+						// token and /api/** still answers 401.
+						//
+						// The pages are empty shells: every value they display arrives later from
+						// an authenticated API call made by the browser, so no data is exposed by
+						// serving them.
+						.requestMatchers(HttpMethod.GET, "/", "/*.html", "/js/**", "/css/**").permitAll()
 						// Everything else, including paths that do not exist yet: default-deny
 						// means an endpoint added later is protected the moment it appears.
 						//

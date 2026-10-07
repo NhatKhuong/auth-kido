@@ -609,4 +609,32 @@ Dự án ưu tiên:
 
 Mục tiêu không phải xây dựng một hệ thống production hoàn chỉnh, mà là thể hiện khả năng thiết kế và implement một backend service **đơn giản, an toàn, có cấu trúc và có khả năng mở rộng**.
 
-**Last updated: 2026-10-06**
+---
+
+## 11. Static UI
+
+Backend phục vụ một **UI tĩnh tối thiểu** để thao tác được các chức năng ở section 5 qua trình duyệt (quyết định của Owner, ADR 0001 §Decision 5).
+
+### Vị trí
+
+```text
+src/main/resources/static/
+├── login.html      → POST /api/auth/login
+├── account.html    → GET /api/users/me
+├── password.html   → PUT /api/users/me/password
+├── admin.html      → GET /api/admin/users
+├── js/api.js       → fetch wrapper dùng chung
+└── css/ui.css
+```
+
+Đổi mật khẩu là **một trang riêng** (`password.html`); `account.html` chỉ hiển thị thông tin tài khoản và chứa link điều hướng sang trang đó.
+
+### Nguyên tắc
+
+* **HTML + vanilla JS.** Không npm, không bundler, không framework frontend, không CSS framework. UI không cần đẹp.
+* **UI chỉ tiêu thụ API.** Không có business logic ở client; endpoint, request body, status code và error shape là contract của backend (section 7) và UI không được định nghĩa lại.
+* **Token** được giữ ở `sessionStorage` phía client. Access token gửi qua `Authorization: Bearer <accessToken>`. Refresh token không được UI lưu: gặp `401` thì UI xoá token và quay về `login.html`.
+* **Authorization vẫn do server quyết định.** UI ẩn/hiện link theo **permission** đọc được từ `GET /api/users/me` (link admin chỉ hiện khi có `USER_READ`, link đổi mật khẩu chỉ hiện khi có `PASSWORD_CHANGE`). Đây chỉ là tiện lợi hiển thị — server vẫn trả `403` cho caller không có quyền.
+* **Security chain:** `SecurityConfig` chỉ `permitAll` cho `GET` trên `/`, `/*.html`, `/js/**`, `/css/**` — một trang `.html` mới ở root nằm sẵn trong matcher này và **không** cần sửa `SecurityConfig`. `/api/**` giữ nguyên default-deny. Các file tĩnh là shell rỗng, không nhúng dữ liệu hay credential; mọi giá trị hiển thị đều đến từ API call đã authenticate.
+
+**Last updated: 2026-10-07**

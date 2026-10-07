@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Thông tin tài khoản</title>
+	<link rel="stylesheet" href="css/ui.css">
+</head>
+<body>
+<h1>Thông tin tài khoản</h1>
+
+<p>
+	<!-- Both links are hidden until GET /api/users/me says the account holds the matching
+	     permission. -->
+	<a id="password-link" href="password.html" hidden>Đổi mật khẩu</a>
+	<a id="admin-link" href="admin.html" hidden>Danh sách người dùng (admin)</a>
+	<button id="logout" type="button">Đăng xuất</button>
+</p>
+
+<p id="account-message" class="message error" role="alert"></p>
+
+<table id="account">
+	<tbody>
+	<tr>
+		<th>ID</th>
+		<td id="account-id"></td>
+	</tr>
+	<tr>
+		<th>Tên đăng nhập</th>
+		<td id="account-username"></td>
+	</tr>
+	<tr>
+		<th>Vai trò</th>
+		<td id="account-roles"></td>
+	</tr>
+	<tr>
+		<th>Quyền</th>
+		<td id="account-permissions"></td>
+	</tr>
+	</tbody>
+</table>
+
+<script src="js/api.js"></script>
+<script>
+	'use strict';
+
+	const accountMessage = document.getElementById('account-message');
+	const passwordLink = document.getElementById('password-link');
+	const adminLink = document.getElementById('admin-link');
+
+	document.getElementById('logout').addEventListener('click', function () {
+		// The token is the whole session: dropping it client-side is what logging out means for a
+		// stateless API. There is no logout endpoint and this UI must not invent one.
+		Api.clearAccessToken();
+		Api.goToLogin();
+	});
+
+	async function loadAccount() {
+		try {
+			const account = await Api.request('/api/users/me');
+			document.getElementById('account-id').textContent = account.id;
+			document.getElementById('account-username').textContent = account.username;
+			document.getElementById('account-roles').textContent = account.roles.join(', ');
+			document.getElementById('account-permissions').textContent = account.permissions.join(', ');
+			// The permission, not the role: the API gates /api/admin/users on USER_READ and
+			// PUT /api/users/me/password on PASSWORD_CHANGE, so each link follows the same rule
+			// and a role added later needs no change here. Hiding a link is convenience only —
+			// the server still refuses the request.
+			passwordLink.hidden = !account.permissions.includes('PASSWORD_CHANGE');
+			adminLink.hidden = !account.permissions.includes('USER_READ');
+		}
+		catch (error) {
+			// A 401 has already redirected to the login page by now; anything else is shown.
+			accountMessage.textContent = error.message;
+		}
+	}
+
+	if (Api.requireAccessToken()) {
+		loadAccount();
+	}
+</script>
+</body>
+</html>
