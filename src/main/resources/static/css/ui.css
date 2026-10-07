@@ -1,37 +1,145 @@
 /*
- * Shared styling for the static UI (backlog 0009). Hand-written and intentionally tiny: a
- * polished or responsive interface is an explicit non-goal and ADR 0001 decision 5 rules out a
- * CSS framework. One file instead of three inline <style> blocks so the pages stay readable.
+ * Shared styling for the static UI (backlog 0009, polished in 0012). Hand-written, system font,
+ * no framework (ADR 0001 decision 5). Selectors use only existing tags, ids and classes.
  */
+:root {
+	--accent: #2563eb;
+	--accent-dark: #1d4ed8;
+	--border: #d1d5db;
+	--text: #1f2937;
+	--muted: #f3f4f6;
+}
+
+* {
+	box-sizing: border-box;
+}
+
 body {
-	font-family: system-ui, sans-serif;
-	margin: 2rem auto;
-	max-width: 44rem;
-	padding: 0 1rem;
+	background: var(--muted);
+	color: var(--text);
+	font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	line-height: 1.5;
+	margin: 0;
+	padding: 2rem 1rem;
+}
+
+/* Every page is one centred card: the body children share the same width. */
+body > * {
+	margin-left: auto;
+	margin-right: auto;
+	max-width: 32rem;
+}
+
+body > h1 {
+	background: #fff;
+	border: 1px solid var(--border);
+	border-bottom: 0;
+	border-radius: 8px 8px 0 0;
+	font-size: 1.4rem;
+	margin-top: 0;
+	margin-bottom: 0;
+	padding: 1.25rem 1.5rem 0.5rem;
+}
+
+body > p,
+body > form,
+body > table {
+	background: #fff;
+	border-left: 1px solid var(--border);
+	border-right: 1px solid var(--border);
+	margin-top: 0;
+	margin-bottom: 0;
+	padding: 0.5rem 1.5rem;
+}
+
+/* Last element of the card closes the border. */
+body > :last-child {
+	border-bottom: 1px solid var(--border);
+	border-radius: 0 0 8px 8px;
+	padding-bottom: 1.25rem;
+}
+
+/* Admin table is wider than a form, so give the whole page more room there. */
+body:has(#users) > * {
+	max-width: 48rem;
+}
+
+a {
+	color: var(--accent);
+	margin-right: 1rem;
 }
 
 label {
 	display: block;
+	font-weight: 600;
 	margin: 0.5rem 0 0.75rem;
 }
 
 input {
+	border: 1px solid var(--border);
+	border-radius: 6px;
 	display: block;
+	font: inherit;
+	font-weight: 400;
 	margin-top: 0.25rem;
-	padding: 0.3rem;
-	width: 18rem;
+	padding: 0.5rem 0.6rem;
+	width: 100%;
+}
+
+input:focus {
+	border-color: var(--accent);
+	outline: 2px solid #bfdbfe;
+}
+
+button {
+	background: var(--accent);
+	border: 0;
+	border-radius: 6px;
+	color: #fff;
+	cursor: pointer;
+	font: inherit;
+	padding: 0.45rem 1rem;
+}
+
+button:hover:not(:disabled) {
+	background: var(--accent-dark);
+}
+
+button:disabled {
+	cursor: not-allowed;
+	opacity: 0.6;
+}
+
+/* Logout sits beside links as a quieter secondary action. */
+#logout {
+	background: #fff;
+	border: 1px solid var(--border);
+	color: var(--text);
+}
+
+#logout:hover:not(:disabled) {
+	background: var(--muted);
 }
 
 table {
 	border-collapse: collapse;
-	margin-top: 0.5rem;
+	width: 100%;
 }
 
 th,
 td {
-	border: 1px solid #999;
-	padding: 0.25rem 0.75rem;
+	border-bottom: 1px solid var(--border);
+	padding: 0.5rem 0.75rem;
 	text-align: left;
+}
+
+thead th {
+	background: var(--muted);
+}
+
+#account th {
+	white-space: nowrap;
+	width: 30%;
 }
 
 /* Status lines are empty until something happens, so they must not reserve space when blank. */
@@ -40,21 +148,26 @@ td {
 }
 
 .message {
-	margin: 0.75rem 0;
-	padding: 0.5rem;
+	border-radius: 6px;
+	margin-bottom: 0.5rem;
+	margin-top: 0.5rem;
+	padding: 0.6rem 0.8rem;
 }
 
 .message.error {
-	background: #fdd;
-	border: 1px solid #c00;
+	background: #fef2f2;
+	border: 1px solid #fca5a5;
+	color: #991b1b;
 }
 
 .message.ok {
-	background: #dfd;
-	border: 1px solid #0a0;
+	background: #f0fdf4;
+	border: 1px solid #86efac;
+	color: #166534;
 }
 
-/* Toggled from JS: the admin link is hidden unless the account holds USER_READ. */
+/* Toggled from JS: links and the admin table stay hidden until permissions are known. Must beat
+   any display rule above, hence !important. */
 [hidden] {
-	display: none;
+	display: none !important;
 }
