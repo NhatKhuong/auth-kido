@@ -31,6 +31,16 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-jpa</artifactId>
 		</dependency>
+		<!--
+		  JWT signing and verification only (NimbusJwtEncoder / NimbusJwtDecoder). The version is
+		  managed by spring-security-bom through the Boot parent, so nothing is pinned here.
+		  Deliberately NOT spring-security-oauth2-resource-server: the bearer token filter is our
+		  own (security/JwtAuthenticationFilter) and no OAuth2 flow is involved.
+		-->
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-oauth2-jose</artifactId>
+		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-validation</artifactId>

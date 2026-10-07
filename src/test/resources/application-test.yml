@@ -1,0 +1,11 @@
+# Configuration for tests that boot the application context (@ActiveProfiles("test")).
+#
+# A profile-specific file is used rather than a test-classpath "application.yml": that would
+# shadow the real one and the tests would stop exercising it. Here only this one key is overridden
+# and everything else still comes from src/main/resources/application.yml.
+#
+# The signing key lives here because the application refuses to start without one (see
+# security/JwtService) — which is the intended behaviour, proved by JwtServiceTest. This value is
+# test-only: it is not a secret and must never be used anywhere else.
+jwt:
+  secret: test-only-signing-key-0123456789-not-a-real-secret
