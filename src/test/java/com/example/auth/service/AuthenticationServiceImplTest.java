@@ -9,12 +9,14 @@ import static org.mockito.Mockito.when;
 
 import com.example.auth.config.JwtProperties;
 import com.example.auth.dto.request.LoginRequest;
+import com.example.auth.dto.request.RefreshTokenRequest;
 import com.example.auth.dto.response.LoginResponse;
 import com.example.auth.entity.Permission;
 import com.example.auth.entity.RefreshToken;
 import com.example.auth.entity.Role;
 import com.example.auth.entity.User;
 import com.example.auth.exception.InvalidCredentialsException;
+import com.example.auth.exception.InvalidRefreshTokenException;
 import com.example.auth.repository.RefreshTokenRepository;
 import com.example.auth.repository.UserRepository;
 import com.example.auth.security.JwtService;
@@ -36,10 +38,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * Login business rules of architecture 01-overview.md sections 3 and 9.
+ * Login and refresh business rules of architecture 01-overview.md sections 3 and 9.
  *
  * <p>A real {@link BCryptPasswordEncoder} is used instead of a mock: the point of these tests is
- * that a stored hash actually verifies, which a stubbed encoder would assert nothing about.
+ * that a stored hash actually verifies, which a stubbed encoder would assert nothing about. The
+ * same holds for {@link RefreshTokenHasher} — refresh is a lookup by hash, so a stubbed hasher
+ * would let these tests pass without the hashing ever being right.
  */
 @ExtendWith(MockitoExtension.class)
 class AuthenticationServiceImplTest {
@@ -100,9 +104,7 @@ class AuthenticationServiceImplTest {
 
 		LoginResponse response = service.login(new LoginRequest("user", PASSWORD));
 
-		ArgumentCaptor<RefreshToken> saved = ArgumentCaptor.forClass(RefreshToken.class);
-		verify(refreshTokenRepository).save(saved.capture());
-		RefreshToken stored = saved.getValue();
+		RefreshToken stored = savedRefreshToken();
 		assertThat(stored.getTokenHash())
 				.isNotEqualTo(response.refreshToken())
 				.isEqualTo(refreshTokenHasher.hash(response.refreshToken()));
@@ -155,6 +157,106 @@ class AuthenticationServiceImplTest {
 		assertThat(new LoginRequest("user", PASSWORD).toString())
 				.contains("user")
 				.doesNotContain(PASSWORD);
+	}
+
+	@Test
+	void refreshReturnsANewAccessTokenAndANewRefreshTokenForTheSameUser() {
+		String presented = presentedToken(NOW.plus(Duration.ofDays(3)));
+		when(jwtService.generateAccessToken(account)).thenReturn("the.new.access.token");
+
+		LoginResponse response = service.refresh(new RefreshTokenRequest(presented));
+
+		assertThat(response.accessToken()).isEqualTo("the.new.access.token");
+		assertThat(response.tokenType()).isEqualTo("Bearer");
+		assertThat(response.expiresIn()).isEqualTo(ACCESS_TOKEN_EXPIRATION.toSeconds());
+		// ADR 0003: the client gets a replacement refresh token, not the one it sent.
+		assertThat(response.refreshToken()).isNotBlank().isNotEqualTo(presented);
+		assertThat(savedRefreshToken().getUser()).isSameAs(account);
+	}
+
+	@Test
+	void refreshDeletesThePresentedRowAndStoresOnlyTheHashOfTheReplacement() {
+		String presented = presentedToken(NOW.plus(Duration.ofDays(3)));
+		RefreshToken existing = refreshTokenRepository
+				.findByTokenHash(refreshTokenHasher.hash(presented))
+				.orElseThrow();
+		when(jwtService.generateAccessToken(account)).thenReturn("the.new.access.token");
+
+		LoginResponse response = service.refresh(new RefreshTokenRequest(presented));
+
+		// Rotation is a delete of the exact row that was presented, followed by an insert.
+		verify(refreshTokenRepository).delete(existing);
+		RefreshToken stored = savedRefreshToken();
+		assertThat(stored.getTokenHash())
+				.isNotEqualTo(response.refreshToken())
+				.isEqualTo(refreshTokenHasher.hash(response.refreshToken()))
+				.isNotEqualTo(existing.getTokenHash());
+		assertThat(stored.getCreatedAt()).isEqualTo(NOW);
+		assertThat(stored.getExpiresAt()).isEqualTo(NOW.plus(REFRESH_TOKEN_EXPIRATION));
+	}
+
+	@Test
+	void refreshIsRejectedWhenTheTokenIsUnknown() {
+		when(refreshTokenRepository.findByTokenHash(any())).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> service.refresh(new RefreshTokenRequest("no-such-token")))
+				.isInstanceOf(InvalidRefreshTokenException.class)
+				.hasFieldOrPropertyWithValue("code", InvalidRefreshTokenException.CODE)
+				.hasFieldOrPropertyWithValue("status", HttpStatus.UNAUTHORIZED);
+
+		verify(refreshTokenRepository, never()).delete(any());
+		verify(refreshTokenRepository, never()).save(any());
+	}
+
+	@Test
+	void refreshIsRejectedWhenTheTokenHasExpired() {
+		String presented = presentedToken(NOW.minus(Duration.ofSeconds(1)));
+
+		// Same exception, same code and same 401 as an unknown token: a client must not be able to
+		// tell "expired" from "never existed", or the state of a stolen token becomes observable.
+		assertThatThrownBy(() -> service.refresh(new RefreshTokenRequest(presented)))
+				.isInstanceOf(InvalidRefreshTokenException.class)
+				.hasFieldOrPropertyWithValue("code", InvalidRefreshTokenException.CODE)
+				.hasFieldOrPropertyWithValue("status", HttpStatus.UNAUTHORIZED);
+
+		// An expired token must not be rotated into a live one.
+		verify(refreshTokenRepository, never()).delete(any());
+		verify(refreshTokenRepository, never()).save(any());
+	}
+
+	/** The boundary: expires_at is the first instant at which the token is no longer accepted. */
+	@Test
+	void refreshIsRejectedAtTheExactExpiryInstant() {
+		String presented = presentedToken(NOW);
+
+		assertThatThrownBy(() -> service.refresh(new RefreshTokenRequest(presented)))
+				.isInstanceOf(InvalidRefreshTokenException.class);
+
+		verify(refreshTokenRepository, never()).save(any());
+	}
+
+	@Test
+	void refreshRequestDoesNotPrintTheTokenWhenLoggedOrPutInAnExceptionMessage() {
+		String token = "a-refresh-token-value";
+
+		assertThat(new RefreshTokenRequest(token).toString()).doesNotContain(token);
+		assertThat(new InvalidRefreshTokenException().getMessage()).doesNotContain(token);
+	}
+
+	/** Registers a stored row for a freshly generated token and returns that token in plaintext. */
+	private String presentedToken(Instant expiresAt) {
+		String token = refreshTokenHasher.generateToken();
+		String hash = refreshTokenHasher.hash(token);
+		RefreshToken stored = new RefreshToken(account, hash, expiresAt, NOW.minus(Duration.ofDays(1)));
+		ReflectionTestUtils.setField(stored, "id", 42L);
+		when(refreshTokenRepository.findByTokenHash(hash)).thenReturn(Optional.of(stored));
+		return token;
+	}
+
+	private RefreshToken savedRefreshToken() {
+		ArgumentCaptor<RefreshToken> saved = ArgumentCaptor.forClass(RefreshToken.class);
+		verify(refreshTokenRepository).save(saved.capture());
+		return saved.getValue();
 	}
 
 	private User user(String username, String plaintextPassword) {

@@ -2,10 +2,12 @@ package com.example.auth.service;
 
 import com.example.auth.config.JwtProperties;
 import com.example.auth.dto.request.LoginRequest;
+import com.example.auth.dto.request.RefreshTokenRequest;
 import com.example.auth.dto.response.LoginResponse;
 import com.example.auth.entity.RefreshToken;
 import com.example.auth.entity.User;
 import com.example.auth.exception.InvalidCredentialsException;
+import com.example.auth.exception.InvalidRefreshTokenException;
 import com.example.auth.repository.RefreshTokenRepository;
 import com.example.auth.repository.UserRepository;
 import com.example.auth.security.JwtService;
@@ -21,8 +23,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Login flow of architecture 01-overview.md section 3: find the user, check the password with the
- * {@code PasswordEncoder}, mint an access token, issue a refresh token and store only its hash.
+ * Login and refresh flows of architecture 01-overview.md section 3.
+ *
+ * <p>Login: find the user, check the password with the {@code PasswordEncoder}, mint an access
+ * token, issue a refresh token and store only its hash.
+ *
+ * <p>Refresh: hash the presented token, look the hash up, reject if it is unknown or expired,
+ * otherwise rotate it — the stored row is deleted and a new one issued (ADR 0003).
  */
 @Service
 public class AuthenticationServiceImpl implements AuthenticationService {
@@ -76,6 +83,52 @@ public class AuthenticationServiceImpl implements AuthenticationService {
 		}
 
 		User user = account.get();
+		LoginResponse response = issueTokens(user);
+		log.info("Issued tokens for username '{}'", user.getUsername());
+		return response;
+	}
+
+	@Override
+	@Transactional
+	public LoginResponse refresh(RefreshTokenRequest request) {
+		// The plaintext token is never stored, so the hash is the only way to resolve one. A token
+		// of any shape hashes to something, which is why a malformed value reaches the same
+		// "not found" branch as an unknown one instead of needing a format check of its own.
+		String presentedHash = refreshTokenHasher.hash(request.refreshToken());
+		RefreshToken stored = refreshTokenRepository.findByTokenHash(presentedHash)
+				.orElseThrow(() -> {
+					// No token value in the log line: the hash would be enough to query the table.
+					log.info("Rejected refresh: token is unknown or has already been rotated");
+					return new InvalidRefreshTokenException();
+				});
+
+		Instant now = clock.instant();
+		if (!stored.getExpiresAt().isAfter(now)) {
+			log.info("Rejected refresh for username '{}': token expired", stored.getUser().getUsername());
+			throw new InvalidRefreshTokenException();
+		}
+
+		User user = stored.getUser();
+		// Rotation (ADR 0003): the presented token stops working the moment it is used, so a stolen
+		// copy is usable once at most, and a replay makes the real user's next refresh fail
+		// visibly instead of succeeding in silence.
+		refreshTokenRepository.delete(stored);
+		// Flushed before the insert so the delete cannot be reordered after it; the new hash
+		// differs, but the ordering is what the "old row is gone" guarantee rests on.
+		refreshTokenRepository.flush();
+
+		LoginResponse response = issueTokens(user);
+		log.info("Rotated refresh token for username '{}'", user.getUsername());
+		return response;
+	}
+
+	/**
+	 * Mints an access token and a fresh refresh token for an already authenticated user.
+	 *
+	 * <p>Shared by login and refresh so the two can never drift into issuing different token
+	 * lifetimes or storing the refresh token differently.
+	 */
+	private LoginResponse issueTokens(User user) {
 		Instant now = clock.instant();
 		String refreshToken = refreshTokenHasher.generateToken();
 		refreshTokenRepository.save(new RefreshToken(
@@ -85,7 +138,6 @@ public class AuthenticationServiceImpl implements AuthenticationService {
 				now.plus(jwtProperties.refreshTokenExpiration()),
 				now));
 
-		log.info("Issued tokens for username '{}'", user.getUsername());
 		return LoginResponse.bearer(
 				jwtService.generateAccessToken(user),
 				refreshToken,

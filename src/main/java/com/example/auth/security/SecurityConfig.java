@@ -43,7 +43,8 @@ public class SecurityConfig {
 				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 				.exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(authenticationEntryPoint))
 				.authorizeHttpRequests(requests -> requests
-						// Login (and, from backlog 0005, refresh) must work without a token.
+						// Login and refresh must work without an access token: refresh exists
+						// precisely because the caller's access token has expired.
 						.requestMatchers("/api/auth/**").permitAll()
 						// Everything else, including paths that do not exist yet: default-deny
 						// means an endpoint added later is protected the moment it appears.

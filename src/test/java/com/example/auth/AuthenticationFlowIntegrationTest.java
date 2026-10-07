@@ -45,8 +45,9 @@ import org.springframework.test.web.servlet.ResultMatcher;
  *
  * <p>These are the cases a mocked test cannot prove: that the configured BCrypt encoder really
  * verifies the hashes migration V7 seeded, that the stored refresh token is a hash of the one
- * handed to the client, and that an unauthenticated request is answered by our entry point rather
- * than by Spring Security's defaults.
+ * handed to the client, that refresh really deletes the presented row and inserts a replacement
+ * (ADR 0003), and that an unauthenticated request is answered by our entry point rather than by
+ * Spring Security's defaults.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -57,8 +58,16 @@ class AuthenticationFlowIntegrationTest {
 	/** Requires authentication; the handler behind it arrives in backlog 0006. */
 	private static final String PROTECTED_PATH = "/api/users/me";
 
+	private static final String REFRESH_PATH = "/api/auth/refresh";
+
 	private static final String ADMIN_PASSWORD = "admin12345";
 	private static final String USER_PASSWORD = "user12345";
+
+	/**
+	 * The application's own hasher, used to read the stored rows the way the service writes them.
+	 * It holds no state beyond a {@code SecureRandom}, so a plain instance is equivalent to the bean.
+	 */
+	private static final RefreshTokenHasher HASHER = new RefreshTokenHasher();
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -246,9 +255,167 @@ class AuthenticationFlowIntegrationTest {
 				.doesNotContain("a-wrong-password-value"));
 	}
 
+	@Test
+	void refreshExchangesAValidTokenForNewTokensAndRotatesTheStoredRow() throws Exception {
+		String issued = refreshTokenFromLogin("user", USER_PASSWORD);
+		String issuedHash = HASHER.hash(issued);
+		long userId = userRepository.findByUsername("user").orElseThrow().getId();
+		assertThat(refreshTokenRepository.findByTokenHash(issuedHash)).isPresent();
+
+		String body = refreshBody(issued, status().isOk());
+		DocumentContext json = JsonPath.parse(body);
+
+		assertThat(json.read("$.accessToken", String.class)).isNotBlank();
+		assertThat(json.read("$.tokenType", String.class)).isEqualTo("Bearer");
+		assertThat(json.read("$.expiresIn", Long.class))
+				.isEqualTo(jwtProperties.accessTokenExpiration().toSeconds());
+		String rotated = json.read("$.refreshToken", String.class);
+		assertThat(rotated).isNotBlank().isNotEqualTo(issued);
+		assertThat(body).doesNotContain("password", "passwordHash", "tokenHash", issuedHash);
+
+		// ADR 0003 at the database level: the presented row is gone and a new one has taken its
+		// place for the same user. This is the assertion the whole rotation decision rests on.
+		assertThat(refreshTokenRepository.findByTokenHash(issuedHash)).isEmpty();
+		RefreshToken replacement = refreshTokenRepository.findByTokenHash(HASHER.hash(rotated)).orElseThrow();
+		assertThat(replacement.getUser().getId()).isEqualTo(userId);
+		assertThat(replacement.getExpiresAt()).isAfter(replacement.getCreatedAt());
+		// Still only a hash: the plaintext replacement was never written down either.
+		assertThat(refreshTokenRepository.findAll())
+				.extracting(RefreshToken::getTokenHash)
+				.doesNotContain(rotated, issued);
+	}
+
+	@Test
+	void theAccessTokenReturnedByRefreshAuthenticatesARequest() throws Exception {
+		String refreshed = JsonPath.parse(refreshBody(refreshTokenFromLogin("admin", ADMIN_PASSWORD), status().isOk()))
+				.read("$.accessToken", String.class);
+
+		// 404, not 401: the freshly minted token was accepted and the request reached dispatch.
+		// Identity against the login token is deliberately not asserted — two tokens minted for
+		// the same user inside the same second are byte-identical by construction, so such an
+		// assertion would be flaky and would prove nothing about usability.
+		mockMvc.perform(get(PROTECTED_PATH).header("Authorization", "Bearer " + refreshed))
+				.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void aRotatedRefreshTokenIsRejectedOnItsSecondUse() throws Exception {
+		String issued = refreshTokenFromLogin("user", USER_PASSWORD);
+		refreshBody(issued, status().isOk());
+
+		// Single use (ADR 0003): replaying the token a second time must fail, which is what makes
+		// a stolen copy usable at most once and a replay observable to the real user.
+		DocumentContext json = JsonPath.parse(refreshBody(issued, status().isUnauthorized()));
+		assertThat(json.read("$.code", String.class)).isEqualTo("INVALID_REFRESH_TOKEN");
+	}
+
+	@Test
+	void anUnknownRefreshTokenIsRejectedWith401() throws Exception {
+		DocumentContext json = JsonPath.parse(
+				refreshBody("a-token-that-was-never-issued", status().isUnauthorized()));
+
+		assertThat(json.read("$.code", String.class)).isEqualTo("INVALID_REFRESH_TOKEN");
+		assertThat(json.read("$.message", String.class)).isNotBlank();
+	}
+
+	@Test
+	void anExpiredRefreshTokenIsRejectedWith401() throws Exception {
+		String expired = HASHER.generateToken();
+		Instant createdAt = Instant.now().minus(Duration.ofDays(8));
+		refreshTokenRepository.saveAndFlush(new RefreshToken(
+				userRepository.findByUsername("user").orElseThrow(),
+				HASHER.hash(expired),
+				createdAt.plus(jwtProperties.refreshTokenExpiration()),
+				createdAt));
+
+		DocumentContext json = JsonPath.parse(refreshBody(expired, status().isUnauthorized()));
+
+		// Same code as an unknown token: the client must not learn which of the two it was.
+		assertThat(json.read("$.code", String.class)).isEqualTo("INVALID_REFRESH_TOKEN");
+		// An expired token must not have been rotated into a live one.
+		assertThat(refreshTokenRepository.findByTokenHash(HASHER.hash(expired))).isPresent();
+	}
+
+	@Test
+	void aMalformedRefreshTokenIsRejectedWithTheSame401AndNotA500() throws Exception {
+		// Refresh tokens are opaque, so there is no format to validate; a value of any shape
+		// hashes to something and lands in the same "unknown token" branch.
+		DocumentContext json = JsonPath.parse(refreshBody("}{ not base64url %%", status().isUnauthorized()));
+
+		assertThat(json.read("$.code", String.class)).isEqualTo("INVALID_REFRESH_TOKEN");
+	}
+
+	@Test
+	void refreshWithAnIncompleteBodyIsA400NotA401() throws Exception {
+		mockMvc.perform(post(REFRESH_PATH).contentType(MediaType.APPLICATION_JSON).content("{}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+	}
+
+	@Test
+	void theRefreshTokenReturnedByRefreshStillCannotBeUsedAsAnAccessToken() throws Exception {
+		String rotated = JsonPath.parse(refreshBody(refreshTokenFromLogin("user", USER_PASSWORD), status().isOk()))
+				.read("$.refreshToken", String.class);
+
+		// Section 3: a refresh token is only ever accepted at /api/auth/refresh, and rotation must
+		// not have introduced a token that behaves differently from the one login issues.
+		mockMvc.perform(get(PROTECTED_PATH).header("Authorization", "Bearer " + rotated))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+	}
+
+	@Test
+	void refreshTokenValuesNeverReachTheLog() throws Exception {
+		String issued = refreshTokenFromLogin("user", USER_PASSWORD);
+		Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+		Logger application = (Logger) LoggerFactory.getLogger("com.example.auth");
+		ListAppender<ILoggingEvent> captured = new ListAppender<>();
+		captured.setContext((LoggerContext) LoggerFactory.getILoggerFactory());
+		captured.start();
+		Level originalLevel = application.getLevel();
+		application.setLevel(Level.TRACE);
+		root.addAppender(captured);
+		String rotated;
+		try {
+			rotated = JsonPath.parse(refreshBody(issued, status().isOk())).read("$.refreshToken", String.class);
+			refreshBody("a-token-that-was-never-issued", status().isUnauthorized());
+		}
+		finally {
+			root.detachAppender(captured);
+			application.setLevel(originalLevel);
+			captured.stop();
+		}
+
+		assertThat(captured.list).isNotEmpty();
+		// The hash is withheld too: it is the lookup key, so it is as good as the token itself.
+		assertThat(captured.list).allSatisfy(event -> assertThat(event.getFormattedMessage())
+				.doesNotContain(issued)
+				.doesNotContain(HASHER.hash(issued))
+				.doesNotContain("a-token-that-was-never-issued"));
+		assertThat(captured.list).allSatisfy(event -> assertThat(event.getFormattedMessage())
+				.doesNotContain(rotated));
+	}
+
 	private String accessToken(String username, String password) throws Exception {
 		return JsonPath.parse(loginBody(username, password, status().isOk()))
 				.read("$.accessToken", String.class);
+	}
+
+	private String refreshTokenFromLogin(String username, String password) throws Exception {
+		return JsonPath.parse(loginBody(username, password, status().isOk()))
+				.read("$.refreshToken", String.class);
+	}
+
+	private String refreshBody(String refreshToken, ResultMatcher expectedStatus) throws Exception {
+		String request = "{\"refreshToken\":\"%s\"}".formatted(
+				refreshToken.replace("\\", "\\\\").replace("\"", "\\\""));
+		return mockMvc.perform(post(REFRESH_PATH)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(request))
+				.andExpect(expectedStatus)
+				.andReturn()
+				.getResponse()
+				.getContentAsString(StandardCharsets.UTF_8);
 	}
 
 	private String loginBody(String username, String password, ResultMatcher expectedStatus) throws Exception {
