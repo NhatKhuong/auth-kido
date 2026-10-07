@@ -1,6 +1,7 @@
 package com.example.auth.security;
 
 import com.example.auth.dto.response.ErrorResponse;
+import com.example.auth.exception.UnauthorizedException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -22,7 +23,8 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class JsonAuthenticationEntryPoint implements AuthenticationEntryPoint {
 
-	static final String CODE = "UNAUTHORIZED";
+	/** Shared with {@link UnauthorizedException} so the two cannot drift apart. */
+	static final String CODE = UnauthorizedException.CODE;
 
 	/**
 	 * One message for every cause. Saying which of "missing", "malformed", "wrongly signed" or

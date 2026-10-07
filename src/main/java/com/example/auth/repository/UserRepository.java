@@ -17,5 +17,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
 	@EntityGraph(attributePaths = { "roles", "roles.permissions" })
 	Optional<User> findByUsername(String username);
 
+	/**
+	 * Loads the account by id together with its roles and permissions in one query.
+	 *
+	 * <p>The id, not the username, is the key: an authenticated request already carries the id in
+	 * its access token, so no second lookup by name is needed. The entity graph is here for the
+	 * same reason as on {@link #findByUsername(String)} — the account response needs both
+	 * collections after the transaction has closed.
+	 */
+	@EntityGraph(attributePaths = { "roles", "roles.permissions" })
+	Optional<User> findWithRolesAndPermissionsById(Long id);
+
 	boolean existsByUsername(String username);
 }

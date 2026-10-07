@@ -55,7 +55,7 @@ import org.springframework.test.web.servlet.ResultMatcher;
 @ActiveProfiles("test")
 class AuthenticationFlowIntegrationTest {
 
-	/** Requires authentication; the handler behind it arrives in backlog 0006. */
+	/** Requires authentication and the {@code ACCOUNT_READ} permission (backlog 0006). */
 	private static final String PROTECTED_PATH = "/api/users/me";
 
 	private static final String REFRESH_PATH = "/api/auth/refresh";
@@ -210,10 +210,12 @@ class AuthenticationFlowIntegrationTest {
 	void aValidTokenGetsPastAuthentication() throws Exception {
 		String token = accessToken("admin", ADMIN_PASSWORD);
 
-		// 404, not 401: the token was accepted and the request reached dispatch. The handler is
-		// backlog 0006, so the assertion is "no longer unauthenticated", not a success body.
+		// 200, not 401: the token was accepted, authorization passed and the handler ran. The body
+		// itself is the subject of AccountAndPasswordIntegrationTest; here it is only evidence that
+		// the request got all the way through.
 		mockMvc.perform(get(PROTECTED_PATH).header("Authorization", "Bearer " + token))
-				.andExpect(status().isNotFound());
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.username").value("admin"));
 	}
 
 	@Test
@@ -290,12 +292,13 @@ class AuthenticationFlowIntegrationTest {
 		String refreshed = JsonPath.parse(refreshBody(refreshTokenFromLogin("admin", ADMIN_PASSWORD), status().isOk()))
 				.read("$.accessToken", String.class);
 
-		// 404, not 401: the freshly minted token was accepted and the request reached dispatch.
+		// 200, not 401: the freshly minted token authenticates a real business request.
 		// Identity against the login token is deliberately not asserted — two tokens minted for
 		// the same user inside the same second are byte-identical by construction, so such an
 		// assertion would be flaky and would prove nothing about usability.
 		mockMvc.perform(get(PROTECTED_PATH).header("Authorization", "Bearer " + refreshed))
-				.andExpect(status().isNotFound());
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.username").value("admin"));
 	}
 
 	@Test
