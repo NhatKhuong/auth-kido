@@ -619,6 +619,7 @@ Backend phục vụ một **UI tĩnh tối thiểu** để thao tác được c�
 
 ```text
 src/main/resources/static/
+├── index.html      → welcome page, chuyển tiếp sang login.html
 ├── login.html      → POST /api/auth/login
 ├── account.html    → GET /api/users/me
 ├── password.html   → PUT /api/users/me/password
@@ -628,6 +629,8 @@ src/main/resources/static/
 ```
 
 Đổi mật khẩu là **một trang riêng** (`password.html`); `account.html` chỉ hiển thị thông tin tài khoản và chứa link điều hướng sang trang đó.
+
+`index.html` không gọi API: nó tồn tại để `GET /` trả về trang vào thay vì `404` của error handler, và chuyển tiếp sang `login.html` bằng `meta refresh` (Spring Boot tự dùng nó làm welcome page cho `/`, nên không cần controller hay redirect phía server).
 
 ### Nguyên tắc
 

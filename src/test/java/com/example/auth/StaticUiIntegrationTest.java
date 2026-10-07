@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -24,7 +25,7 @@ import org.springframework.test.web.servlet.MockMvc;
 /**
  * The static UI of backlog 0009 against the real security chain (architecture 01-overview.md
  * section 11), including the {@code /password.html} page split out of {@code account.html} by
- * backlog 0011.
+ * backlog 0011 and the {@code /index.html} entry page added by backlog 0008.
  *
  * <p>Two claims are made here and they pull in opposite directions, which is the whole point of
  * testing them in one class: the pages must load for a browser that holds no token yet, and the
@@ -60,7 +61,8 @@ class StaticUiIntegrationTest {
 	 * it has any way of holding a token.
 	 */
 	@ParameterizedTest
-	@ValueSource(strings = { "/login.html", "/account.html", "/admin.html", "/password.html" })
+	@ValueSource(strings = {
+			"/index.html", "/login.html", "/account.html", "/admin.html", "/password.html" })
 	void pagesAreServedToAnonymousBrowsers(String path) throws Exception {
 		mockMvc.perform(get(path))
 				.andExpect(status().isOk())
@@ -83,7 +85,8 @@ class StaticUiIntegrationTest {
 	 */
 	@ParameterizedTest
 	@ValueSource(strings = {
-			"/login.html", "/account.html", "/admin.html", "/password.html", "/js/api.js" })
+			"/index.html", "/login.html", "/account.html", "/admin.html", "/password.html",
+			"/js/api.js" })
 	void pagesContainNoCredentialsOrSeededData(String path) throws Exception {
 		String body = mockMvc.perform(get(path))
 				.andReturn()
@@ -154,6 +157,51 @@ class StaticUiIntegrationTest {
 		mockMvc.perform(get("/no-such-page.html"))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("NOT_FOUND"));
+	}
+
+	/**
+	 * Backlog 0008: the bare root is the entry page, not a 404.
+	 *
+	 * <p>{@code SecurityConfig} has permitted {@code GET "/"} since 0009, but with no
+	 * {@code index.html} behind it the request fell through to the error handler and a reviewer
+	 * opening {@code http://localhost:8080/} was answered with {@code {"code":"NOT_FOUND"}} — the
+	 * application looked broken at the one URL a stranger tries first (0009 Known gap).
+	 *
+	 * <p>Checked as a forward to {@code index.html} and not as a body: Spring Boot answers the root
+	 * with its welcome-page mapping, which forwards, and MockMvc records a forward instead of
+	 * executing it. Asserting the target keeps the test specific — a 200 on its own would also be
+	 * satisfied by a forward to some other page, or by a catch-all answering everything — and the
+	 * served markup of {@code /index.html}, including the link it points at, is asserted by
+	 * {@link #theEntryPageSendsTheBrowserToTheLoginPage()}.
+	 *
+	 * <p>The second half of the ticket's requirement is in the same test on purpose. Serving the
+	 * root is the kind of change that gets made by widening a matcher, and a widened matcher would
+	 * leave this assertion passing while the API quietly stopped requiring a token.
+	 */
+	@Test
+	void theRootPathIsTheEntryPageAndStillLeavesTheApiClosed() throws Exception {
+		mockMvc.perform(get("/"))
+				.andExpect(status().isOk())
+				.andExpect(forwardedUrl("index.html"));
+
+		mockMvc.perform(get("/api/users/me"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+	}
+
+	/**
+	 * The entry page's only job: send the browser on to the login form.
+	 *
+	 * <p>A redirect that names no destination would turn the root into a dead end that still
+	 * answers 200, which every other assertion here would accept.
+	 */
+	@Test
+	void theEntryPageSendsTheBrowserToTheLoginPage() throws Exception {
+		assertThat(servedBody("/index.html"))
+				.contains("http-equiv=\"refresh\"")
+				.contains("url=login.html")
+				// A visible link as well, so a browser that ignores the meta refresh is not stuck.
+				.contains("href=\"login.html\"");
 	}
 
 	/**

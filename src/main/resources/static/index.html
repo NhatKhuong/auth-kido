@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Auth &amp; User Management</title>
+	<!-- A reviewer opens http://localhost:8080/ first. Without this file that URL is a 404 JSON
+	     body from the API's error handler, which looks like a broken application rather than the
+	     entry point of a UI (backlog 0009 Known gap, resolved by backlog 0008).
+
+	     A meta refresh rather than an HTTP redirect: Spring Boot already serves this file as the
+	     welcome page for "/", and sending a 302 would mean a controller or a filter, i.e. Java code
+	     and a SecurityConfig matcher for a page whose only job is to point at login.html. -->
+	<meta http-equiv="refresh" content="0; url=login.html">
+	<link rel="stylesheet" href="css/ui.css">
+</head>
+<body>
+<h1>Auth &amp; User Management</h1>
+<!-- Shown only if the refresh above is blocked or disabled, so the page is never a dead end. -->
+<p>Đang chuyển tới trang đăng nhập… <a href="login.html">Đăng nhập</a></p>
+</body>
+</html>
