@@ -14,12 +14,14 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.example.auth.dto.request.ChangePasswordRequest;
 import com.example.auth.dto.response.AccountResponse;
+import com.example.auth.dto.response.UserSummaryResponse;
 import com.example.auth.entity.Permission;
 import com.example.auth.entity.Role;
 import com.example.auth.entity.User;
 import com.example.auth.exception.InvalidCurrentPasswordException;
 import com.example.auth.exception.UnauthorizedException;
 import com.example.auth.repository.UserRepository;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -186,6 +188,64 @@ class UserServiceImplTest {
 		assertThat(new InvalidCurrentPasswordException().getMessage())
 				.isNotBlank()
 				.doesNotContain(CURRENT_PASSWORD, NEW_PASSWORD);
+	}
+
+	@Test
+	void listUsersReturnsEveryAccountWithItsRolesSorted() {
+		User admin = account("admin", 1L, "ROLE_ADMIN", "ROLE_USER");
+		User plain = account("user", 2L, "ROLE_USER");
+		when(userRepository.findAllByOrderByIdAsc()).thenReturn(List.of(admin, plain));
+
+		List<UserSummaryResponse> listed = service.listUsers();
+
+		assertThat(listed).containsExactly(
+				// Roles sorted although they were added ROLE_USER first: the response is a
+				// contract and a Set's iteration order is not.
+				new UserSummaryResponse(1L, "admin", List.of("ROLE_ADMIN", "ROLE_USER")),
+				new UserSummaryResponse(2L, "user", List.of("ROLE_USER")));
+	}
+
+	@Test
+	void listUsersPreservesTheRepositoryOrder() {
+		when(userRepository.findAllByOrderByIdAsc()).thenReturn(List.of(
+				account("first", 1L, "ROLE_USER"),
+				account("second", 2L, "ROLE_USER"),
+				account("third", 3L, "ROLE_USER")));
+
+		// Oldest first is part of the contract, so the service must not re-sort or re-group.
+		assertThat(service.listUsers()).extracting(UserSummaryResponse::username)
+				.containsExactly("first", "second", "third");
+	}
+
+	@Test
+	void listUsersNeverExposesCredentialMaterial() {
+		User listed = account("admin", 1L, "ROLE_ADMIN");
+		when(userRepository.findAllByOrderByIdAsc()).thenReturn(List.of(listed));
+
+		// The record's own toString is what ends up in a log or an assertion message, so the
+		// absence of the hash has to be a property of the type, not of the caller.
+		assertThat(service.listUsers().toString())
+				.doesNotContain(listed.getPasswordHash())
+				.doesNotContain("$2a$")
+				.doesNotContain("password");
+	}
+
+	@Test
+	void listUsersReturnsAnEmptyListWhenThereAreNoAccounts() {
+		when(userRepository.findAllByOrderByIdAsc()).thenReturn(List.of());
+
+		// Empty, not null: the endpoint must still answer 200 with a JSON array.
+		assertThat(service.listUsers()).isEmpty();
+	}
+
+	/** An account with the given id and roles; roles are added in reverse order on purpose. */
+	private User account(String username, long id, String... roleNames) {
+		User created = new User(username, passwordEncoder.encode("irrelevant-for-listing"));
+		for (int index = roleNames.length - 1; index >= 0; index--) {
+			created.addRole(new Role(roleNames[index]));
+		}
+		ReflectionTestUtils.setField(created, "id", id);
+		return created;
 	}
 
 	private User savedAccount() {

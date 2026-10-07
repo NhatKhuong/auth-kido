@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import com.example.auth.dto.response.ErrorResponse;
+import com.example.auth.security.JsonAccessDeniedHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.MessageSourceResolvable;
@@ -11,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -24,8 +26,10 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
  * Turns every exception that reaches the dispatcher into the one error body defined in
  * {@code documents/architecture/01-overview.md} section 7.
  *
- * <p>401 and 403 are not handled here: those decisions belong to the security layer and are
- * produced by the authentication entry point / access denied handler.
+ * <p>401 is not produced here: that decision belongs to the security layer and is rendered by the
+ * authentication entry point. 403 has two sources and only one of them reaches the filter chain's
+ * access denied handler, so the other is mapped here — see
+ * {@link #handleAuthorizationDenied(AuthorizationDeniedException)}.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -43,6 +47,28 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<ErrorResponse> handleApiException(ApiException ex) {
 		return ResponseEntity.status(ex.getStatus())
 				.body(new ErrorResponse(ex.getCode(), ex.getMessage()));
+	}
+
+	/**
+	 * A {@code @PreAuthorize} denial on a handler method.
+	 *
+	 * <p>Method security raises it while the dispatcher is invoking the handler method, not inside
+	 * {@code AuthorizationFilter}, so the configured {@link JsonAccessDeniedHandler} is not what
+	 * answers it. Rendering it where it surfaces is deliberate: the alternative is to rethrow and
+	 * rely on the exception travelling back out of the dispatcher to
+	 * {@code ExceptionTranslationFilter}, which only happens as long as no {@code @ExceptionHandler}
+	 * claims it — too subtle a thing for a 403 to depend on. The code and message are read from that
+	 * handler instead of repeated, so the two routes cannot drift apart.
+	 *
+	 * <p>Only this subtype is handled: a bare {@link AccessDeniedException} is still rethrown by
+	 * {@link #handleUnexpected(Exception)} so the filter chain renders it, and both routes end at
+	 * the same body.
+	 */
+	@ExceptionHandler(AuthorizationDeniedException.class)
+	public ResponseEntity<ErrorResponse> handleAuthorizationDenied(AuthorizationDeniedException ex) {
+		// The exception is not echoed: its message names the authority that was required.
+		return ResponseEntity.status(HttpStatus.FORBIDDEN)
+				.body(new ErrorResponse(JsonAccessDeniedHandler.CODE, JsonAccessDeniedHandler.MESSAGE));
 	}
 
 	/** Bean validation on an {@code @Valid} request body. */

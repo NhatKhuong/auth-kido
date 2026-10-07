@@ -7,7 +7,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import com.example.auth.security.JsonAccessDeniedHandler;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -107,6 +109,38 @@ class GlobalExceptionHandlerTest {
 		assertThatThrownBy(() -> handler.handleUnexpected(denied)).isSameAs(denied);
 	}
 
+	/**
+	 * A {@code @PreAuthorize} denial surfaces during handler invocation, so it arrives here rather
+	 * than at the filter chain's access denied handler.
+	 */
+	@Test
+	void methodSecurityDenialReturns403WithTheForbiddenCode() throws Exception {
+		String body = mockMvc.perform(post("/probe/denied"))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.code").value("FORBIDDEN"))
+				.andExpect(jsonPath("$.message").isNotEmpty())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+
+		// Spring Security's message names the missing authority; it must not be echoed.
+		assertThat(body).doesNotContain("USER_READ");
+	}
+
+	/** Both ways of being denied must be indistinguishable to a client. */
+	@Test
+	void bothDenialPathsRenderTheSameBody() {
+		ResponseEntity<ErrorResponse> fromMethodSecurity = handler.handleAuthorizationDenied(
+				new AuthorizationDeniedException("Access Denied for authority USER_READ"));
+
+		assertThat(fromMethodSecurity.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+		// The literals are read from the filter-chain handler, not repeated, so this asserts they
+		// are in fact shared.
+		assertThat(fromMethodSecurity.getBody())
+				.isEqualTo(new ErrorResponse(JsonAccessDeniedHandler.CODE, JsonAccessDeniedHandler.MESSAGE));
+		assertThat(fromMethodSecurity.getBody().code()).isEqualTo("FORBIDDEN");
+	}
+
 	@Test
 	void apiExceptionKeepsItsOwnStatusAndCode() {
 		ResponseEntity<ErrorResponse> response =
@@ -139,6 +173,16 @@ class GlobalExceptionHandlerTest {
 		@PostMapping("/probe/boom")
 		void boom() {
 			throw new IllegalStateException("database on fire");
+		}
+
+		/**
+		 * Stands in for a {@code @PreAuthorize} denial: method security is not active in a
+		 * standalone MockMvc setup, but the exception it raises is exactly this one, and what is
+		 * under test is how the advice renders it.
+		 */
+		@PostMapping("/probe/denied")
+		void denied() {
+			throw new AuthorizationDeniedException("Access Denied for authority USER_READ");
 		}
 	}
 }

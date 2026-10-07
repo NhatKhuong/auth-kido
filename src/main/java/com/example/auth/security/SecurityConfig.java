@@ -11,6 +11,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
 /**
@@ -31,7 +32,8 @@ public class SecurityConfig {
 	SecurityFilterChain securityFilterChain(
 			HttpSecurity http,
 			JwtAuthenticationFilter jwtAuthenticationFilter,
-			AuthenticationEntryPoint authenticationEntryPoint) throws Exception {
+			AuthenticationEntryPoint authenticationEntryPoint,
+			AccessDeniedHandler accessDeniedHandler) throws Exception {
 		return http
 				// No cookies or sessions are used, so CSRF tokens have nothing to protect.
 				.csrf(csrf -> csrf.disable())
@@ -41,13 +43,23 @@ public class SecurityConfig {
 				.formLogin(form -> form.disable())
 				.logout(logout -> logout.disable())
 				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-				.exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(authenticationEntryPoint))
+				.exceptionHandling(exceptions -> exceptions
+						.authenticationEntryPoint(authenticationEntryPoint)
+						// 403 in the same error shape as every other failure. Reached when
+						// AuthorizationFilter denies a request; a @PreAuthorize denial is raised
+						// later, during handler invocation, and is rendered by
+						// GlobalExceptionHandler from the same two literals.
+						.accessDeniedHandler(accessDeniedHandler))
 				.authorizeHttpRequests(requests -> requests
 						// Login and refresh must work without an access token: refresh exists
 						// precisely because the caller's access token has expired.
 						.requestMatchers("/api/auth/**").permitAll()
 						// Everything else, including paths that do not exist yet: default-deny
 						// means an endpoint added later is protected the moment it appears.
+						//
+						// Deliberately no per-path authority rule, not even for /api/admin/**:
+						// permissions are declared with @PreAuthorize next to the handler method,
+						// so authorization cannot be lost by moving a path or adding a route.
 						.anyRequest().authenticated())
 				// After ExceptionTranslationFilter and before the authorization decision: the
 				// SecurityContext must be populated before authorizeHttpRequests is evaluated.

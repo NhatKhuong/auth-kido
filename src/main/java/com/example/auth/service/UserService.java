@@ -2,8 +2,10 @@ package com.example.auth.service;
 
 import com.example.auth.dto.request.ChangePasswordRequest;
 import com.example.auth.dto.response.AccountResponse;
+import com.example.auth.dto.response.UserSummaryResponse;
 import com.example.auth.exception.InvalidCurrentPasswordException;
 import com.example.auth.exception.UnauthorizedException;
+import java.util.List;
 
 /**
  * Account use cases of the authenticated caller (architecture 01-overview.md section 2.3).
@@ -33,4 +35,15 @@ public interface UserService {
 	 * @throws UnauthorizedException           if no account with that id exists any more
 	 */
 	void changePassword(Long userId, ChangePasswordRequest request);
+
+	/**
+	 * Lists every account for an administrator.
+	 *
+	 * <p>Takes no caller: who may call it is an authorization decision, enforced by the permission
+	 * on the controller method, and duplicating that check here would create a second place for the
+	 * rule to drift. The returned entries carry no credential material.
+	 *
+	 * @return one entry per account, oldest first
+	 */
+	List<UserSummaryResponse> listUsers();
 }

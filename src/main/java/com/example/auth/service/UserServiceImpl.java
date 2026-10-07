@@ -2,11 +2,13 @@ package com.example.auth.service;
 
 import com.example.auth.dto.request.ChangePasswordRequest;
 import com.example.auth.dto.response.AccountResponse;
+import com.example.auth.dto.response.UserSummaryResponse;
 import com.example.auth.entity.User;
 import com.example.auth.exception.InvalidCurrentPasswordException;
 import com.example.auth.exception.UnauthorizedException;
 import com.example.auth.mapper.AccountMapper;
 import com.example.auth.repository.UserRepository;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -60,6 +62,14 @@ public class UserServiceImpl implements UserService {
 		userRepository.save(user);
 
 		log.info("Password changed for username '{}'", user.getUsername());
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public List<UserSummaryResponse> listUsers() {
+		// Mapped inside the transaction: the roles of each account are a lazy collection, and the
+		// mapper is what guarantees no password hash can reach the response.
+		return AccountMapper.toUserSummaryResponses(userRepository.findAllByOrderByIdAsc());
 	}
 
 	/**
